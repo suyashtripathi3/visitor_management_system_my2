@@ -5,6 +5,7 @@ namespace App\Http\Controllers\VisitorManagement;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Visitor;
+use App\Models\VisitorMovementHistory;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
@@ -20,16 +21,23 @@ class VisitorController extends Controller
      */
     public function index(Request $request): Response
     {
-        $query = Visitor::query()->orderByDesc('created_at');
+        // Load latest movement info using relationship
+        $query = Visitor::with([
+            'movementHistories' => function ($q) {
+                $q->latest();
+            }
+        ])->orderByDesc('created_at');
 
         // 🔍 Status filter
         if ($request->filled('status')) {
-            match ($request->status) {
-                'checked_in' => $query->whereNotNull('checked_in_at')->whereNull('checked_out_at'),
-                'checked_out' => $query->whereNotNull('checked_out_at'),
-                'not_checked_in' => $query->whereNull('checked_in_at'),
-                default => null,
-            };
+            $query->whereHas('movementHistories', function ($q) use ($request) {
+                match ($request->status) {
+                    'checked_in' => $q->whereNotNull('checked_in_at')->whereNull('checked_out_at'),
+                    'checked_out' => $q->whereNotNull('checked_out_at'),
+                    'not_checked_in' => $q->whereNull('checked_in_at'),
+                    default => null,
+                };
+            });
         }
 
         // 🔍 Search
@@ -44,11 +52,16 @@ class VisitorController extends Controller
             });
         }
 
-        $visitors = $query->paginate(10)->withQueryString();
+        // ✅ Handle perPage dropdown (10 / 50 / 100 / 200 / all)
+        $perPage = $request->perPage === 'all'
+            ? $query->count() // load all
+            : (is_numeric($request->perPage) ? (int) $request->perPage : 10);
+
+        $visitors = $query->paginate($perPage)->appends($request->query());
 
         return Inertia::render('VisitorManagement/Index', [
             'visitors' => $visitors,
-            'filters' => $request->only(['search', 'status']),
+            'filters' => $request->only(['search', 'status', 'perPage']),
         ]);
     }
 
@@ -65,15 +78,14 @@ class VisitorController extends Controller
      */
     public function invite(Request $request)
     {
-        
         $data = $request->validate([
             'name' => 'required|string|max:191',
             'email' => 'required|email|max:191',
             'phone' => 'nullable|string|max:50',
             'company' => 'nullable|string|max:191',
-            'purpose' => 'nullable|string',
             'gender' => 'nullable|string|max:20',
-            'venues' => 'nullable', // don't force array, handle manually
+            'purpose' => 'nullable|string',
+            'venues' => 'nullable',
             'photo' => 'nullable|image|max:2048',
         ]);
 
@@ -84,30 +96,31 @@ class VisitorController extends Controller
             $data['photo'] = 'assets/images/visitor/' . $filename;
         }
 
-
-        // 🏢 Decode venues if sent as JSON
-        if ($request->filled('venues')) {
-            $venues = is_string($request->venues)
-                ? json_decode($request->venues, true)
-                : $request->venues;
-            $data['venues'] = json_encode($venues);
-        }
-
-
         // 🎟️ Badge + Creator
         $data['badge_no'] = strtoupper(Str::random(6));
         $data['created_by'] = Auth::id();
 
+        // ✳️ Create Visitor
         $visitor = Visitor::create($data);
+
+        // 🧭 Create initial movement record
+        $venues = is_string($request->venues)
+            ? json_decode($request->venues, true)
+            : $request->venues;
+
+        VisitorMovementHistory::create([
+            'visitor_id' => $visitor->id,
+            'purpose' => $request->purpose,
+            'venues' => $venues,
+            'checked_in_at' => null,
+            'checked_out_at' => null,
+        ]);
 
         return response()->json([
             'message' => 'Visitor invited successfully!',
-            'visitor' => $visitor,
+            'visitor' => $visitor->load('movementHistories'),
         ]);
     }
-
-
-
 
     /**
      * 🔁 Re-invite existing visitor
@@ -116,20 +129,26 @@ class VisitorController extends Controller
     {
         $visitor = Visitor::findOrFail($id);
 
-        // Example logic for re-invitation
-        // Send email again or log re-invite action
+        VisitorMovementHistory::create([
+            'visitor_id' => $visitor->id,
+            'purpose' => 'Re-invite',
+            'venues' => null,
+            'checked_in_at' => null,
+            'checked_out_at' => null,
+        ]);
+
         return response()->json([
             'message' => 'Visitor re-invited successfully.',
-            'visitor' => $visitor,
+            'visitor' => $visitor->load('movementHistories'),
         ]);
     }
 
     /**
-     * ✏️ Edit form (Not used in invite flow but kept for admin)
+     * ✏️ Edit form
      */
     public function edit($id): Response
     {
-        $visitor = Visitor::findOrFail($id);
+        $visitor = Visitor::with('movementHistories')->findOrFail($id);
 
         return Inertia::render('VisitorManagement/Invite', [
             'editId' => $visitor->id,
@@ -149,10 +168,8 @@ class VisitorController extends Controller
             'email' => 'required|email|max:191',
             'phone' => 'nullable|string|max:50',
             'company' => 'nullable|string|max:191',
-            'purpose' => 'nullable|string',
             'gender' => 'nullable|string|max:20',
-            'venues' => 'nullable',
-            'photo' => 'nullable', // don't force image validation yet
+            'photo' => 'nullable',
             'badge_no' => [
                 'nullable',
                 'string',
@@ -161,17 +178,8 @@ class VisitorController extends Controller
             ],
         ]);
 
-        // Validate only if user uploaded a new photo
-        if ($request->hasFile('photo')) {
-            $request->validate([
-                'photo' => 'image|max:2048',
-            ]);
-        }
-
-
         // 📷 Handle new photo upload
         if ($request->hasFile('photo') && $request->file('photo')->isValid()) {
-            // Delete old file (if exists)
             if ($visitor->photo) {
                 $path = public_path($visitor->photo);
                 if (file_exists($path)) {
@@ -186,25 +194,13 @@ class VisitorController extends Controller
             $data['photo'] = 'assets/images/visitor/' . $filename;
         }
 
-        // 🏢 Handle venues (accept JSON or array)
-        if ($request->has('venues')) {
-            $venues = $request->venues;
-            if (is_string($venues)) {
-                $venues = json_decode($venues, true);
-            }
-            $data['venues'] = is_array($venues) ? json_encode($venues) : null;
-        }
-
-        // ✅ Update the visitor
         $visitor->update($data);
 
         return response()->json([
             'message' => 'Visitor updated successfully.',
-            'visitor' => $visitor,
+            'visitor' => $visitor->load('movementHistories'),
         ]);
     }
-
-
 
     /**
      * 🗑️ Delete visitor
@@ -212,7 +208,11 @@ class VisitorController extends Controller
     public function destroy($id)
     {
         $visitor = Visitor::findOrFail($id);
-        if ($visitor->photo) Storage::disk('public')->delete($visitor->photo);
+
+        if ($visitor->photo)
+            Storage::disk('public')->delete($visitor->photo);
+
+        $visitor->movementHistories()->delete();
         $visitor->delete();
 
         return redirect()->route('visitor.index')->with('success', 'Visitor deleted successfully.');
@@ -224,14 +224,23 @@ class VisitorController extends Controller
     public function checkIn($id)
     {
         $visitor = Visitor::findOrFail($id);
+        $movement = $visitor->movementHistories()->latest()->first();
 
-        if ($visitor->checked_in_at && !$visitor->checked_out_at) {
+        if ($movement && $movement->checked_in_at && !$movement->checked_out_at) {
             return back()->with('error', 'Visitor is already checked in.');
         }
 
-        $visitor->checked_in_at = Carbon::now();
-        $visitor->checked_out_at = null;
-        $visitor->save();
+        if (!$movement || $movement->checked_out_at) {
+            $movement = VisitorMovementHistory::create([
+                'visitor_id' => $visitor->id,
+                'purpose' => 'Check-in',
+                'venues' => null,
+                'checked_in_at' => Carbon::now(),
+                'checked_out_at' => null,
+            ]);
+        } else {
+            $movement->update(['checked_in_at' => Carbon::now()]);
+        }
 
         return back()->with('success', 'Visitor checked in successfully.');
     }
@@ -241,18 +250,19 @@ class VisitorController extends Controller
      */
     public function checkOut($id)
     {
-        $visitor = Visitor::findOrFail($id);
+        $visitor = Visitor::with('movementHistories')->findOrFail($id);
+        $movement = $visitor->movementHistories()->latest()->first();
 
-        if (!$visitor->checked_in_at) {
+        if (!$movement || !$movement->checked_in_at) {
             return back()->with('error', 'Visitor has not been checked in yet.');
         }
 
-        if ($visitor->checked_out_at) {
+        if ($movement->checked_out_at) {
             return back()->with('error', 'Visitor already checked out.');
         }
 
-        $visitor->checked_out_at = Carbon::now();
-        $visitor->save();
+        $movement->checked_out_at = now();
+        $movement->save();
 
         return back()->with('success', 'Visitor checked out successfully.');
     }
@@ -273,6 +283,7 @@ class VisitorController extends Controller
             ->orWhere('phone', 'like', "%{$query}%")
             ->orWhere('company', 'like', "%{$query}%")
             ->take(10)
+            ->with('movementHistories')
             ->get();
 
         if ($visitors->isEmpty()) {
@@ -284,5 +295,15 @@ class VisitorController extends Controller
         }
 
         return response()->json(['found' => true, 'visitors' => $visitors]);
+    }
+
+    public function movements($id)
+    {
+        $visitor = Visitor::with('movementHistories')->findOrFail($id);
+
+        return Inertia::render('VisitorManagement/Movements', [
+            'visitor' => $visitor,
+            'movements' => $visitor->movementHistories,
+        ]);
     }
 }

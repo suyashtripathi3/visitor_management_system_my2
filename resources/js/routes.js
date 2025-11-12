@@ -9,12 +9,12 @@ export default {
         form: route('visitor.form'),
         invite: route('visitor.invite'),
         reinvite: id => route('visitor.reinvite', id),
-
         update: id => route('visitor.update', id),
         delete: id => route('visitor.destroy', id),
         search: route('visitor.search'),
         checkIn: id => route('visitor.checkin', id),
         checkOut: id => route('visitor.checkout', id),
+        movements: id => route('visitor.movements', id), // ✅ NEW (optional)
     },
 
     // ✅ Users Module

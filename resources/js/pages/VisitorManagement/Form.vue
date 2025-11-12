@@ -84,14 +84,13 @@
                         <ul class="list-group list-group-flush">
                             <li class="list-group-item py-3">
                                 <strong>📜 History:</strong>
-                                <div v-if="Array.isArray(form.history) && form.history.length" class="mt-2">
-                                    <ul class="list-unstyled mb-0">
-                                        <li v-for="(item, i) in form.history" :key="i">
-                                            • {{ item }}
-                                        </li>
-                                    </ul>
-                                </div>
-                                <p v-else class="text-muted mt-2 mb-0">No history available</p>
+                            <li v-if="form.movement_histories && form.movement_histories.length"
+                                v-for="(m, i) in form.movement_histories" :key="i">
+                                • {{ m.purpose || "Visit" }} -
+                                {{ new Date(m.checked_in_at).toLocaleDateString("en-IN") }}
+                            </li>
+
+                            <p v-else class="text-muted mt-2 mb-0">No history available</p>
                             </li>
                             <li class="list-group-item d-flex justify-content-between py-3">
                                 <span>🎟️ Badge No</span>
@@ -773,7 +772,7 @@ const inviteVisitor = async () => {
     // append all keys from form; use for.reset or manual append
     Object.keys(form).forEach((k) => {
         if (k === "venues") data.append(k, JSON.stringify(form.venues));
-        else if (k === "history") data.append(k, JSON.stringify(form.history || []));
+        // else if (k === "history") data.append(k, JSON.stringify(form.history || []));
         else data.append(k, form[k] ?? "");
     });
 

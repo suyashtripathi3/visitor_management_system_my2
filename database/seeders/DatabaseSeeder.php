@@ -19,7 +19,7 @@ class DatabaseSeeder extends Seeder
         BuildingSeeder::class,
         FloorSeeder::class,
         DesignationSeeder::class,
-
+        VisitorSeeder::class,
         RolePermissionSeeder::class,
         UserSeeder::class, // If you created dummy user
     ]);

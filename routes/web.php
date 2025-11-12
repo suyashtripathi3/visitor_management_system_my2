@@ -82,6 +82,7 @@ Route::prefix('common-fields')->name('common.')->group(function () {
 
 /** Visitor management **/
 
+/** Visitor management **/
 Route::middleware(['auth'])
     ->prefix('visitor-management')
     ->name('visitor.')
@@ -108,6 +109,9 @@ Route::middleware(['auth'])
         // ✅ Check-in / Check-out
         Route::post('/visitors/{id}/check-in', [VisitorController::class, 'checkIn'])->name('checkin');
         Route::post('/visitors/{id}/check-out', [VisitorController::class, 'checkOut'])->name('checkout');
+
+        // ✅ (Optional) View Movement History
+        Route::get('/visitors/{id}/movements', [VisitorController::class, 'movements'])->name('movements');
     });
 
 
