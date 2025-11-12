@@ -21,7 +21,6 @@ class VisitorController extends Controller
      */
     public function index(Request $request): Response
     {
-        // Load latest movement info using relationship
         $query = Visitor::with([
             'movementHistories' => function ($q) {
                 $q->latest();
@@ -30,17 +29,30 @@ class VisitorController extends Controller
 
         // 🔍 Status filter
         if ($request->filled('status')) {
-            $query->whereHas('movementHistories', function ($q) use ($request) {
-                match ($request->status) {
-                    'checked_in' => $q->whereNotNull('checked_in_at')->whereNull('checked_out_at'),
-                    'checked_out' => $q->whereNotNull('checked_out_at'),
-                    'not_checked_in' => $q->whereNull('checked_in_at'),
-                    default => null,
-                };
-            });
+            switch ($request->status) {
+                case 'checked_in':
+                    $query->whereHas('movementHistories', function ($q) {
+                        $q->whereNotNull('checked_in_at')
+                            ->whereNull('checked_out_at');
+                    });
+                    break;
+
+                case 'checked_out':
+                    $query->whereHas('movementHistories', function ($q) {
+                        $q->whereNotNull('checked_out_at');
+                    });
+                    break;
+
+                case 'not_checked_in':
+                    // ✅ Visitors who have NO movement record OR only have movement without check_in
+                    $query->whereDoesntHave('movementHistories', function ($q) {
+                        $q->whereNotNull('checked_in_at');
+                    });
+                    break;
+            }
         }
 
-        // 🔍 Search
+        // 🔍 Search filter
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
@@ -52,9 +64,9 @@ class VisitorController extends Controller
             });
         }
 
-        // ✅ Handle perPage dropdown (10 / 50 / 100 / 200 / all)
+        // 🔢 Handle perPage dropdown
         $perPage = $request->perPage === 'all'
-            ? $query->count() // load all
+            ? $query->count()
             : (is_numeric($request->perPage) ? (int) $request->perPage : 10);
 
         $visitors = $query->paginate($perPage)->appends($request->query());
@@ -89,21 +101,17 @@ class VisitorController extends Controller
             'photo' => 'nullable|image|max:2048',
         ]);
 
-        // 📸 Handle photo upload
         if ($request->hasFile('photo') && $request->file('photo')->isValid()) {
             $filename = time() . '_' . preg_replace('/\s+/', '_', $request->file('photo')->getClientOriginalName());
             $request->file('photo')->move(public_path('assets/images/visitor'), $filename);
             $data['photo'] = 'assets/images/visitor/' . $filename;
         }
 
-        // 🎟️ Badge + Creator
         $data['badge_no'] = strtoupper(Str::random(6));
         $data['created_by'] = Auth::id();
 
-        // ✳️ Create Visitor
         $visitor = Visitor::create($data);
 
-        // 🧭 Create initial movement record
         $venues = is_string($request->venues)
             ? json_decode($request->venues, true)
             : $request->venues;
@@ -178,7 +186,6 @@ class VisitorController extends Controller
             ],
         ]);
 
-        // 📷 Handle new photo upload
         if ($request->hasFile('photo') && $request->file('photo')->isValid()) {
             if ($visitor->photo) {
                 $path = public_path($visitor->photo);
