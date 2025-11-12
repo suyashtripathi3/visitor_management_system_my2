@@ -1,0 +1,267 @@
+🏛 Visitor Management System
+Models, Migrations & Relationships Document
+1. User
+
+Command:
+
+php artisan make:model User -m
+
+Migration: create_users_table
+
+Fields:
+
+id (auto-increment)
+
+name (string)
+
+email (string, unique)
+
+phone_number (string)
+
+password (string)
+
+department (string, nullable)
+
+status (boolean, default true)
+
+created_at, updated_at (timestamps)
+
+Model: User
+Relationships:
+
+belongsToMany Roles (Spatie)
+
+hasMany VisitorHistory
+
+/***********************************/
+2. Role (Spatie)
+
+No need to create (Spatie installs)
+
+Tables
+
+roles
+
+model_has_roles
+
+role_has_permissions
+/***********************************/
+
+3. Permission (Spatie)
+
+Also installed with Spatie
+
+/***********************************/
+Facility Structure
+4. Building
+
+Command:
+
+php artisan make:model Building -m
+
+Migration: create_buildings_table
+
+Fields:
+
+id (auto-increment)
+
+building_code (string, unique, format: BLD001)
+
+name (string)
+
+address (string, nullable)
+
+status (boolean, default true)
+
+created_at, updated_at (timestamps)
+
+Model: Building
+Relationships
+
+hasMany Floors
+
+hasMany Locations
+
+/***********************************/
+5. Floor
+
+Command:
+
+php artisan make:model Floor -m
+
+Migration: create_floors_table
+
+Fields:
+
+id (auto-increment)
+
+floor_code (string, unique, format: FLR001)
+
+building_id (foreignId → buildings.id)
+
+name (string)
+
+status (boolean, default true)
+
+created_at, updated_at (timestamps)
+
+Model: Floor
+Relationships
+
+belongsTo Building
+
+hasMany Locations
+
+
+/***********************************/
+6. Location Type
+
+Command:
+
+php artisan make:model LocationType -m
+
+Migration: create_location_types_table
+
+Fields:
+
+id (auto-increment)
+
+type_code (string, unique, format: LTY001)
+
+name (string) (Office, Lab, Room etc.)
+
+status (boolean, default true)
+
+created_at, updated_at (timestamps)
+
+Model: LocationType
+Relationships
+
+hasMany Locations
+
+
+/***********************************/
+7. Location
+
+Command:
+
+php artisan make:model Location -m
+
+Migration: create_locations_table
+
+Fields:
+
+id (auto-increment)
+
+location_code (string, unique, format: LOC001)
+
+building_id (foreignId → buildings.id)
+
+floor_id (foreignId → floors.id)
+
+location_type_id (foreignId → location_types.id)
+
+name (string)
+
+status (boolean, default true)
+
+created_at, updated_at (timestamps)
+
+Model: Location
+Relationships
+
+belongsTo Building
+
+belongsTo Floor
+
+belongsTo LocationType
+
+hasMany VisitorHistory
+
+/***********************************/
+Visitor Management
+8. Visitor
+
+Command:
+
+php artisan make:model Visitor -m
+
+Migration: create_visitors_table
+
+Fields:
+
+id (auto-increment)
+
+visitor_code (string, unique, format: VIS001)
+
+name (string)
+
+email (string, nullable)
+
+phone_number (string)
+
+aadhar_number (string, unique)
+
+status (boolean, default true)
+
+created_at, updated_at (timestamps)
+
+
+
+Model: Visitor
+Relationships
+
+hasMany VisitorHistory
+
+/***********************************/
+9. Visitor History
+
+Command:
+
+php artisan make:model VisitorHistory -m
+
+Migration: create_visitor_histories_table
+
+Fields:
+
+id (auto-increment)
+
+visitor_id (foreignId → visitors.id)
+
+user_id (foreignId → users.id) (whom visitor meets)
+
+location_id (foreignId → locations.id)
+
+visit_date (date)
+
+visit_time (time)
+
+purpose (text, nullable)
+
+created_at, updated_at (timestamps)
+
+Model: VisitorHistory
+Relationships
+
+belongsTo Visitor
+
+belongsTo User
+
+belongsTo Location
+
+✅ Final Commands Summary
+php artisan make:model User -m
+php artisan make:model Building -m
+php artisan make:model Floor -m
+php artisan make:model LocationType -m
+php artisan make:model Location -m
+php artisan make:model Visitor -m
+php artisan make:model VisitorHistory -m
+
+⚙️ Notes
+
+Add custom code generators for fields like BLD001, VIS001, etc. in model boot().
+
+After editing migrations:
+
+php artisan migrate
