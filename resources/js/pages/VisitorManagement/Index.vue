@@ -122,11 +122,11 @@
                                 <button class="btn btn-sm btn-outline-primary me-1" title="Edit Visitor"
                                     @click="openEditModal(v)">
                                     <i class="fa fa-pen"></i>
-                                </button>
+                                </button> -->
                                 <button class="btn btn-sm btn-outline-danger" title="Delete Visitor"
                                     @click="destroy(v.id)">
                                     <i class="fa fa-trash"></i>
-                                </button> -->
+                                </button>
                             </td>
                         </tr>
 
@@ -169,19 +169,30 @@
                                     <div class="col-md-6 text-center text-md-start mb-4 mb-md-0">
                                         <div class="d-inline-block border border-3 border-primary shadow-sm mb-3 rounded-circle overflow-hidden"
                                             style="width: 120px; height: 120px;">
-                                            <img :src="getPhotoUrl(selectedVisitor)" alt="Visitor Photo"
-                                                class="w-100 h-100 object-fit-cover" />
+                                            <!-- conditional photo / initial fallback for VI -->
+                                            <template v-if="selectedVisitor.photo">
+                                                <img :src="getPhotoUrl(selectedVisitor)" alt="Visitor Photo"
+                                                    class="w-100 h-100 object-fit-cover" />
+                                            </template>
+                                            <template v-else>
+                                                <div
+                                                    class="d-flex align-items-center justify-content-center w-100 h-100 bg-primary">
+                                                    <span class="fw-bold text-white display-initial">
+                                                        {{ getInitial(selectedVisitor.name) }}
+                                                    </span>
+                                                </div>
+                                            </template>
                                         </div>
-                                        <h5 class="fw-bold text-primary mb-1">{{ selectedVisitor.name }}</h5>
+                                        <h5 class="fw-bold text-primary mb-1">{{ selectedVisitor.name || "—" }}</h5>
                                         <p class="text-muted mb-1">{{ selectedVisitor.company || "No Company" }}</p>
                                         <p class="mb-1"><strong>Email:</strong> {{ selectedVisitor.email || "—" }}</p>
                                         <p><strong>Phone:</strong> {{ selectedVisitor.phone || "—" }}</p>
                                     </div>
 
                                     <div class="col-md-6 text-center">
-                                        <div class="border border-2 border-dashed rounded p-4 bg-light">
+                                        <div class="border border-dashed p-3 rounded bg-light m-auto">
                                             <img src="/assets/images/qr-placeholder.png" alt="QR Code" width="150"
-                                                height="150" />
+                                                height="150" class="m-auto"/>
                                             <p class="small text-muted mt-2 mb-0">QR Code Placeholder</p>
                                         </div>
                                     </div>
@@ -193,6 +204,11 @@
                     <div class="modal-footer bg-white">
                         <button class="btn btn-secondary" data-bs-dismiss="modal">
                             <i class="fa fa-times me-1"></i> Close
+                        </button>
+
+                        <!-- Print VI Button -->
+                        <button class="btn btn-primary" @click="printVI">
+                            <i class="fa fa-print me-1"></i> Print VI
                         </button>
                     </div>
                 </div>
@@ -321,16 +337,17 @@ const checkOut = (id) =>
     router.post(AppRoutes.visitor.checkOut(id), {}, { onSuccess: () => setTimeout(applyFilter, 300) });
 
 const showDetails = (v) => {
-    selectedVisitor.value = v;
+    selectedVisitor.value = v || {};
+    if (!modalInstance) modalInstance = new bootstrap.Modal(visitorModal.value);
     modalInstance.show();
 };
 
 const getPhotoUrl = (v) =>
-    v.photo
+    v?.photo
         ? v.photo.startsWith("http")
             ? v.photo
-            : `/${v.photo}`
-        : "";
+            : `/${v.photo}` // relative path
+        : ""; // empty when no photo
 
 const getInitial = (name) => {
     if (!name) return "?";
@@ -370,8 +387,8 @@ const startQRScanner = () => {
     qrInterval = setInterval(async () => {
         if (!barcodeDetector || !video.value) return;
         const canvas = document.createElement("canvas");
-        canvas.width = video.value.videoWidth;
-        canvas.height = video.value.videoHeight;
+        canvas.width = video.value.videoWidth || 640;
+        canvas.height = video.value.videoHeight || 480;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(video.value, 0, 0, canvas.width, canvas.height);
         try {
@@ -398,8 +415,172 @@ const stopQRScanner = () => {
         cameraStream = null;
     }
 };
-</script>
 
+/**
+ * Robust Print VI using hidden iframe.
+ * Waits for images to load (or times out), then prints the iframe content.
+ */
+const printVI = () => {
+    const v = selectedVisitor.value || {};
+
+    // FIXED PHOTO URL — absolute, always loads in iframe
+    const photoSrc = v.photo
+        ? (v.photo.startsWith("http") ? v.photo : `${window.location.origin}/${v.photo}`)
+        : null;
+
+    const photoHtml = photoSrc
+        ? `<img src="${photoSrc}" class="photo" />`
+        : `<div class="initial">${getInitial(v.name)}</div>`;
+
+    // CHECK-IN/OUT
+    const m = v.movement_histories?.[0] || {};
+    const checkIn = m.checked_in_at
+        ? new Date(m.checked_in_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
+        : "-";
+    const checkOut = m.checked_out_at
+        ? new Date(m.checked_out_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
+        : "-";
+
+    let statusClass = "status-not";
+    let statusText = "Not Checked In";
+
+    if (m.checked_in_at && !m.checked_out_at) {
+        statusClass = "status-in";
+        statusText = "Checked In";
+    }
+    if (m.checked_out_at) {
+        statusClass = "status-out";
+        statusText = "Checked Out";
+    }
+
+    const html = `
+    <!doctype html>
+    <html>
+    <head>
+        <meta charset="utf-8" />
+        <title>ID Card - ${v.name || ""}</title>
+        <style>
+            body { margin:0; padding:0; background:#f0f0f0; display:flex; justify-content:center; align-items:center; height:100vh; }
+            .id-card {
+                width: 300px;
+                padding: 20px;
+                border-radius: 12px;
+                background: #ffffff;
+                text-align: center;
+                border: 2px solid #0d6efd;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+                font-family: Arial, sans-serif;
+            }
+
+            .photo {
+                width: 110px;
+                height: 110px;
+                border-radius: 50%;
+                object-fit: cover;
+                border: 3px solid #0d6efd;
+            }
+
+            .initial {
+                width: 110px;
+                height: 110px;
+                border-radius: 50%;
+                background:#0d6efd;
+                color:white;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                font-size:42px;
+                font-weight:700;
+            }
+
+            h2 { margin: 10px 0 5px; color:#0d6efd; font-size:22px; }
+            p { margin: 4px 0; font-size:14px; }
+            .label { font-weight: 600; color:#444; }
+
+            .qr-box { margin-top: 12px; }
+            .qr-box img { width:120px; }
+
+            .status {
+                display:inline-block;
+                padding:5px 10px;
+                border-radius:6px;
+                color:white;
+                font-weight:bold;
+                margin-top:8px;
+            }
+
+            .status-not { background:#6c757d; }
+            .status-in  { background:#198754; }
+            .status-out { background:#dc3545; }
+
+            @media print {
+                body { background:white; height:auto; }
+                .id-card {
+                    box-shadow:none;
+                    border:2px solid #0d6efd;
+                    margin: 0 auto;
+                    page-break-inside: avoid;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="id-card">
+
+            ${photoHtml}
+
+            <h2>${v.name || "—"}</h2>
+            <p class="company">${v.company || "No Company"}</p>
+
+            <p><span class="label">Badge:</span> ${v.badge_no || "—"}</p>
+            <p><span class="label">Email:</span> ${v.email || "—"}</p>
+            <p><span class="label">Phone:</span> ${v.phone || "—"}</p>
+
+            <div class="qr-box">
+                <img src="/assets/images/qr-placeholder.png" />
+            </div>
+
+        </div>
+    </body>
+    </html>
+    `;
+
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    const imgs = doc.images;
+    let loaded = 0;
+
+    const done = () => {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+        setTimeout(() => document.body.removeChild(iframe), 500);
+    };
+
+    if (imgs.length === 0) return done();
+
+    for (let img of imgs) {
+        if (img.complete) loaded++;
+        else img.onload = () => {
+            loaded++;
+            if (loaded === imgs.length) done();
+        };
+    }
+
+    if (loaded === imgs.length) done();
+};
+
+
+</script>
 
 <style scoped>
 .visitor-photo {
@@ -420,6 +601,11 @@ const stopQRScanner = () => {
     font-size: 1rem;
 }
 
+.display-initial {
+    font-size: 48px;
+    line-height: 1;
+}
+
 .modal-content {
     border-radius: 10px;
 }
@@ -431,5 +617,11 @@ const stopQRScanner = () => {
 .table-responsive::-webkit-scrollbar-thumb {
     background-color: rgba(0, 0, 0, 0.15);
     border-radius: 4px;
+}
+
+/* small tweak so VI initial fallback in the larger avatar matches visual weight */
+.d-inline-block .display-initial {
+    color: #fff;
+    font-weight: 700;
 }
 </style>

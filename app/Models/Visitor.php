@@ -18,6 +18,7 @@ class Visitor extends Model
         'badge_no',
         'created_by',
         'gender',
+        "aadhaar",
     ];
 
     protected $casts = [

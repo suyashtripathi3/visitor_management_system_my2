@@ -14,8 +14,12 @@ export default {
         search: route('visitor.search'),
         checkIn: id => route('visitor.checkin', id),
         checkOut: id => route('visitor.checkout', id),
-        movements: id => route('visitor.movements', id), // ✅ NEW (optional)
+        movements: id => route('visitor.movements', id),
+
+        // ✅ NEW route for meeting details
+        meetingDetails: movementId => route('visitor.meeting.details', movementId),
     },
+
 
     // ✅ Users Module
     users: {

@@ -11,14 +11,11 @@ class VisitorMovementHistory extends Model
 
     protected $fillable = [
         'visitor_id',
-        'purpose',
-        'venues',
         'checked_in_at',
         'checked_out_at',
     ];
 
     protected $casts = [
-        'venues' => 'array',
         'checked_in_at' => 'datetime',
         'checked_out_at' => 'datetime',
     ];
@@ -27,6 +24,12 @@ class VisitorMovementHistory extends Model
     public function visitor()
     {
         return $this->belongsTo(Visitor::class);
+    }
+
+    // A movement can have multiple meeting entries
+    public function meetingDetails()
+    {
+        return $this->hasMany(VisitorMeetingDetails::class);
     }
 
     // Accessors for formatted datetime

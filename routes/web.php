@@ -88,31 +88,36 @@ Route::middleware(['auth'])
     ->name('visitor.')
     ->group(function () {
 
-        // ✅ Visitors Listing Page
+        // Visitors Listing
         Route::get('/visitors', [VisitorController::class, 'index'])->name('index');
 
-        // ✅ Invite Visitor Form Page
+        // Invite Form
         Route::get('/visitors/form', [VisitorController::class, 'create'])->name('form');
 
-        // ✅ Invite and Re-invite Actions
+        // Invite / Re-invite
         Route::post('/visitors/invite', [VisitorController::class, 'invite'])->name('invite');
         Route::post('/visitors/{id}/reinvite', [VisitorController::class, 'reinvite'])->name('reinvite');
 
-        // ✅ Search (for smart autofill)
+        // Search
         Route::post('/visitors/search', [VisitorController::class, 'search'])->name('search');
 
-        // ✅ Edit/Update/Delete (Admin use)
+        // Edit / Update / Delete
         Route::get('/visitors/{id}/edit', [VisitorController::class, 'edit'])->name('edit');
         Route::put('/visitors/{id}', [VisitorController::class, 'update'])->name('update');
         Route::delete('/visitors/{id}', [VisitorController::class, 'destroy'])->name('destroy');
 
-        // ✅ Check-in / Check-out
+        // Check-in / Check-out
         Route::post('/visitors/{id}/check-in', [VisitorController::class, 'checkIn'])->name('checkin');
         Route::post('/visitors/{id}/check-out', [VisitorController::class, 'checkOut'])->name('checkout');
 
-        // ✅ (Optional) View Movement History
+        // Movement History
         Route::get('/visitors/{id}/movements', [VisitorController::class, 'movements'])->name('movements');
+
+        // ✅ NEW: Meeting Details
+        Route::get('/visitors/movement/{movementId}/meetings', [VisitorController::class, 'meetingDetails'])
+            ->name('meeting.details');
     });
+
 
 
 

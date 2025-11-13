@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Visitor;
 use App\Models\VisitorMovementHistory;
+use App\Models\VisitorMeetingDetails;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
@@ -92,15 +93,20 @@ class VisitorController extends Controller
     {
         $data = $request->validate([
             'name' => 'required|string|max:191',
-            'email' => 'required|email|max:191',
-            'phone' => 'nullable|string|max:50',
-            'company' => 'nullable|string|max:191',
-            'gender' => 'nullable|string|max:20',
-            'purpose' => 'nullable|string',
-            'venues' => 'nullable',
+            'email' => 'nullable|email|max:191',
+            'phone' => 'required|digits_between:10,12',
+            'company' => 'required|string|max:191',
+            'gender' => 'required|string|max:20',
+            'purpose' => 'required|string',
+            'venues' => 'required',
+            'meeting_date' => 'required|date',
+            'meeting_time' => 'required',
+            'remarks' => 'nullable|string',
             'photo' => 'nullable|image|max:2048',
+            'aadhaar' => 'required|digits:12',
         ]);
 
+        // Handle photo upload
         if ($request->hasFile('photo') && $request->file('photo')->isValid()) {
             $filename = time() . '_' . preg_replace('/\s+/', '_', $request->file('photo')->getClientOriginalName());
             $request->file('photo')->move(public_path('assets/images/visitor'), $filename);
@@ -112,16 +118,27 @@ class VisitorController extends Controller
 
         $visitor = Visitor::create($data);
 
+        // 👇 Create Movement (NO purpose, NO venue)
+        $movement = VisitorMovementHistory::create([
+            'visitor_id' => $visitor->id,
+            'checked_in_at' => null,
+            'checked_out_at' => null,
+        ]);
+
+        // JSON decode venues
         $venues = is_string($request->venues)
             ? json_decode($request->venues, true)
             : $request->venues;
 
-        VisitorMovementHistory::create([
+        // 👇 Create Meeting Details
+        VisitorMeetingDetails::create([
             'visitor_id' => $visitor->id,
+            'movement_id' => $movement->id,
             'purpose' => $request->purpose,
             'venues' => $venues,
-            'checked_in_at' => null,
-            'checked_out_at' => null,
+            'meeting_date' => $request->meeting_date,
+            'meeting_time' => $request->meeting_time,
+            'remarks' => $request->remarks,
         ]);
 
         return response()->json([
@@ -137,12 +154,21 @@ class VisitorController extends Controller
     {
         $visitor = Visitor::findOrFail($id);
 
-        VisitorMovementHistory::create([
+        // New movement
+        $movement = VisitorMovementHistory::create([
             'visitor_id' => $visitor->id,
-            'purpose' => 'Re-invite',
-            'venues' => null,
             'checked_in_at' => null,
             'checked_out_at' => null,
+        ]);
+
+        // Meeting details for reinvite
+        VisitorMeetingDetails::create([
+            'visitor_id' => $visitor->id,
+            'movement_id' => $movement->id,
+            'purpose' => 'Re-invite',
+            'venues' => null,
+            'meeting_date' => now()->toDateString(),
+            'meeting_time' => now(),
         ]);
 
         return response()->json([
@@ -150,6 +176,7 @@ class VisitorController extends Controller
             'visitor' => $visitor->load('movementHistories'),
         ]);
     }
+
 
     /**
      * ✏️ Edit form
@@ -174,7 +201,7 @@ class VisitorController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:191',
             'email' => 'required|email|max:191',
-            'phone' => 'nullable|string|max:50',
+            'phone' => 'nullable|digits_between:10,12',
             'company' => 'nullable|string|max:191',
             'gender' => 'nullable|string|max:20',
             'photo' => 'nullable',
@@ -185,6 +212,7 @@ class VisitorController extends Controller
                 Rule::unique('visitors', 'badge_no')->ignore($visitor->id),
             ],
         ]);
+
 
         if ($request->hasFile('photo') && $request->file('photo')->isValid()) {
             if ($visitor->photo) {
@@ -306,11 +334,24 @@ class VisitorController extends Controller
 
     public function movements($id)
     {
-        $visitor = Visitor::with('movementHistories')->findOrFail($id);
+        $visitor = Visitor::with([
+            'movementHistories.meetingDetails'
+        ])->findOrFail($id);
 
         return Inertia::render('VisitorManagement/Movements', [
             'visitor' => $visitor,
             'movements' => $visitor->movementHistories,
         ]);
     }
+
+    public function meetingDetails($movementId)
+    {
+        $meetings = VisitorMeetingDetails::where('movement_id', $movementId)->get();
+
+        return response()->json([
+            'meetings' => $meetings
+        ]);
+    }
+
+
 }

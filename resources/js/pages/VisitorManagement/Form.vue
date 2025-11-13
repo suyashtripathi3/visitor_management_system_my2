@@ -41,6 +41,7 @@
                         <div class="card-body text-center py-5">
                             <!-- Avatar -->
                             <div class="avatar avatar-xl position-relative mx-auto">
+                                <!-- If previewImage present show image; else initials -->
                                 <img v-if="previewImage" :src="previewImage"
                                     class="w-100 h-100 rounded-circle object-fit-cover" alt="Avatar" />
                                 <div v-else
@@ -59,6 +60,13 @@
                                     @click="openPhotoOptions" data-bs-toggle="tooltip" title="Upload or Capture Photo">
                                     <i class="fa fa-camera"></i>
                                 </a>
+                            </div>
+
+                            <!-- Remove photo button (shows only when image exists) -->
+                            <div class="mt-2">
+                                <button v-if="previewImage" class="btn btn-sm btn-outline-danger" @click="removePhoto">
+                                    <i class="fa fa-trash me-1"></i> Remove Photo
+                                </button>
                             </div>
 
                             <!-- Basic Info -->
@@ -87,7 +95,7 @@
                             <li v-if="form.movement_histories && form.movement_histories.length"
                                 v-for="(m, i) in form.movement_histories" :key="i">
                                 • {{ m.purpose || "Visit" }} -
-                                {{ new Date(m.checked_in_at).toLocaleDateString("en-IN") }}
+                                {{ formatDate(m.checked_in_at || m.created_at) }}
                             </li>
 
                             <p v-else class="text-muted mt-2 mb-0">No history available</p>
@@ -147,8 +155,8 @@
                                         <input v-model="form.name" class="form-control" required />
                                     </div>
                                     <div class="col-sm-6">
-                                        <label class="form-label">Email *</label>
-                                        <input v-model="form.email" type="email" class="form-control" required />
+                                        <label class="form-label">Email </label>
+                                        <input v-model="form.email" type="email" class="form-control" />
                                     </div>
                                     <div class="col-sm-6">
                                         <label class="form-label">Phone *</label>
@@ -200,12 +208,26 @@
                                         <textarea v-model="form.purpose" class="form-control" rows="3"
                                             required></textarea>
                                     </div>
+
+                                    <!-- NEW: Meeting Date & Time & Remarks -->
+                                    <div class="col-sm-6">
+                                        <label class="form-label">Meeting Date *</label>
+                                        <input v-model="form.meeting_date" type="date" class="form-control" required />
+                                    </div>
+
+                                    <div class="col-sm-6">
+                                        <label class="form-label">Meeting Time *</label>
+                                        <!-- use datetime-local for a full timestamp if you prefer,
+                                             but backend expects meeting_time — using datetime-local keeps it unambiguous -->
+                                        <input v-model="form.meeting_time" type="datetime-local" class="form-control"
+                                            required />
+                                    </div>
                                 </div>
 
                                 <div class="text-end mt-4">
                                     <button type="submit" class="btn btn-primary" :disabled="!isFormValid">
                                         <i class="fa fa-paper-plane me-1"></i>
-                                        {{ form.id ? "Re-Invite Visitor" : "Invite Visitor" }}
+                                        {{ form.id ? "Re-invite Visitor" : "Invite Visitor" }}
                                     </button>
                                 </div>
                             </form>
@@ -284,7 +306,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from "vue";
+/*
+  Full updated script:
+  - meeting_date / meeting_time / remarks handled
+  - send to backend via FormData
+  - selectVisitor populates meeting fields when available
+*/
+
+import { ref, computed, onMounted, watch } from "vue";
 import { useForm } from "@inertiajs/vue3";
 import axios from "axios";
 import AppRoutes from "@/routes";
@@ -307,8 +336,12 @@ const form = useForm({
     gender: "",
     aadhaar: "",
     venues: [],
-    history: [],
+    movement_histories: [], // read-only history shown in left panel
     photo: null,
+    // NEW fields
+    meeting_date: "",
+    meeting_time: "",
+    remarks: "",
 });
 
 /* --- UI / refs --- */
@@ -331,7 +364,7 @@ let searchDebounceTimer = null;
 /* face/qr state */
 const faceDetected = ref(false);
 const faceStatus = ref("");
-const currentBox = ref(null); // holds the latest detection box {x,y,width,height}
+const currentBox = ref(null);
 const qrMode = ref(false);
 const qrFound = ref(false);
 const qrMessage = ref("");
@@ -353,7 +386,6 @@ onMounted(async () => {
         console.error("❌ Failed to load face-api.js models", err);
     }
 
-    // Set up BarcodeDetector if available
     if ("BarcodeDetector" in window) {
         try {
             const supportedFormats = await window.BarcodeDetector.getSupportedFormats();
@@ -366,6 +398,10 @@ onMounted(async () => {
     } else {
         console.log("BarcodeDetector not available in this browser.");
     }
+
+    if (cameraModal.value) {
+        cameraModal.value.addEventListener?.("hidden.bs.modal", stopCamera);
+    }
 });
 
 /* computed initials */
@@ -373,8 +409,8 @@ const initials = computed(() => {
     if (!form.name) return "V";
     const parts = form.name.split(" ");
     return parts.length > 1
-        ? parts[0][0].toUpperCase() + parts[1][0].toUpperCase()
-        : parts[0][0].toUpperCase();
+        ? (parts[0][0] || "").toUpperCase() + (parts[1][0] || "").toUpperCase()
+        : (parts[0][0] || "").toUpperCase();
 });
 
 /* -------------------------
@@ -397,10 +433,28 @@ const handleFileUpload = (e) => {
     }
 };
 
+const removePhoto = () => {
+    form.photo = null;
+    previewImage.value = null;
+    if (fileInput.value) {
+        fileInput.value.value = "";
+    }
+};
+
+/* Fix backend relative path to absolute URL when we get `photo` from backend */
+const fixPhotoUrl = (path) => {
+    if (!path) return null;
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+        return path;
+    }
+    if (path.startsWith("/")) {
+        return window.location.origin + path;
+    }
+    return `${window.location.origin}/${path}`;
+};
+
 /* -------------------------
    Camera & face detection
-   - draw a larger green box
-   - store currentBox for cropping
    ------------------------- */
 const openCamera = async () => {
     bootstrap.Modal.getInstance(photoOptionModal.value).hide();
@@ -431,7 +485,6 @@ const openCamera = async () => {
 const updateOverlaySize = () => {
     const overlay = overlayCanvas.value;
     if (!video.value || !overlay) return;
-    // match overlay to video dimensions (pixel size)
     overlay.width = video.value.videoWidth || video.value.clientWidth;
     overlay.height = video.value.videoHeight || video.value.clientHeight;
     overlay.style.width = video.value.clientWidth + "px";
@@ -449,7 +502,6 @@ const startFaceDetection = () => {
     detectionInterval = setInterval(async () => {
         try {
             if (!video.value || video.value.readyState < 2) return;
-            // detect faces with TinyFaceDetector (inputSize increased for better accuracy)
             const detections = await faceapi.detectAllFaces(
                 video.value,
                 new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.45 })
@@ -461,36 +513,31 @@ const startFaceDetection = () => {
                 faceDetected.value = true;
                 faceStatus.value = "Face Detected ✅";
 
-                // choose largest face
                 const biggestFace = detections.reduce((prev, curr) => {
                     const prevArea = prev.box.width * prev.box.height;
                     const currArea = curr.box.width * curr.box.height;
                     return currArea > prevArea ? curr : prev;
                 });
 
-                // box in video-space (faceapi boxes are relative to the video element's internal pixels)
                 const { x, y, width, height } = biggestFace.box;
 
-                // enlarge box to ensure whole head included
-                const paddingX = width * 0.5; // 50% width extra
-                const paddingY = height * 0.6; // 60% height extra
+                const paddingX = width * 0.9;
+                const paddingY = height * 1.2;
+
                 const boxX = Math.max(x - paddingX / 2, 0);
-                const boxY = Math.max(y - paddingY / 1.4, 0);
+                const boxY = Math.max(y - paddingY / 1.8, 0);
                 const boxWidth = Math.min(width + paddingX, overlay.width - boxX);
                 const boxHeight = Math.min(height + paddingY, overlay.height - boxY);
 
-                // store current box for cropping (in video pixel coordinates)
                 currentBox.value = { x: boxX, y: boxY, width: boxWidth, height: boxHeight };
 
-                // draw a smooth green rounded rectangle and semi-transparent fill
                 context.beginPath();
                 context.lineWidth = 4;
                 context.strokeStyle = "rgba(0, 200, 0, 0.95)";
-                // rounded rect (approx)
-                roundRect(context, boxX, boxY, boxWidth, boxHeight, 8);
+                roundRect(context, boxX, boxY, boxWidth, boxHeight, 10);
                 context.stroke();
 
-                context.fillStyle = "rgba(0, 200, 0, 0.12)";
+                context.fillStyle = "rgba(0, 200, 0, 0.10)";
                 context.fillRect(boxX, boxY, boxWidth, boxHeight);
             } else {
                 faceDetected.value = false;
@@ -501,11 +548,11 @@ const startFaceDetection = () => {
             console.error("Error detecting face:", err);
             faceStatus.value = "Error detecting face.";
         }
-    }, 300); // smoother updates
+    }, 250);
 };
 
-/* helper: rounded rectangle drawing */
 function roundRect(ctx, x, y, width, height, radius) {
+    ctx.beginPath();
     ctx.moveTo(x + radius, y);
     ctx.arcTo(x + width, y, x + width, y + height, radius);
     ctx.arcTo(x + width, y + height, x, y + height, radius);
@@ -514,33 +561,36 @@ function roundRect(ctx, x, y, width, height, radius) {
     ctx.closePath();
 }
 
-/* capturePhoto: crop to the currentBox and store as file */
 const capturePhoto = () => {
     if (!currentBox.value) return alert("No face box available to capture.");
     const v = video.value;
     const tmpCanvas = canvas.value;
-    // ensure canvas has full video pixel resolution
     tmpCanvas.width = v.videoWidth;
     tmpCanvas.height = v.videoHeight;
     const ctx = tmpCanvas.getContext("2d");
-    // draw full frame
     ctx.drawImage(v, 0, 0, tmpCanvas.width, tmpCanvas.height);
 
-    // crop to currentBox (currentBox values correspond to overlay pixels which match video pixels)
     const { x, y, width, height } = currentBox.value;
-
-    // create an offscreen canvas for cropped area
     const cropCanvas = document.createElement("canvas");
     cropCanvas.width = Math.round(width);
     cropCanvas.height = Math.round(height);
     const cropCtx = cropCanvas.getContext("2d");
 
-    cropCtx.drawImage(tmpCanvas, Math.round(x), Math.round(y), Math.round(width), Math.round(height), 0, 0, Math.round(width), Math.round(height));
+    cropCtx.drawImage(
+        tmpCanvas,
+        Math.round(x),
+        Math.round(y),
+        Math.round(width),
+        Math.round(height),
+        0,
+        0,
+        Math.round(width),
+        Math.round(height)
+    );
 
     const dataUrl = cropCanvas.toDataURL("image/png");
     previewImage.value = dataUrl;
 
-    // convert to File
     const arr = dataUrl.split(",");
     const mime = arr[0].match(/:(.*?);/)[1];
     const bstr = atob(arr[1]);
@@ -549,9 +599,7 @@ const capturePhoto = () => {
     while (n--) u8arr[n] = bstr.charCodeAt(n);
     form.photo = new File([u8arr], "visitor_photo.png", { type: mime });
 
-    // stop detection & camera
     stopDetectionAndCamera();
-
     bootstrap.Modal.getInstance(cameraModal.value).hide();
 };
 
@@ -568,8 +616,6 @@ function stopDetectionAndCamera() {
 
 /* -------------------------
    QR Scanner
-   - openQRScanner: opens camera modal in qrMode
-   - scanning uses BarcodeDetector when available
    ------------------------- */
 const openQRScanner = async () => {
     qrMode.value = true;
@@ -605,14 +651,12 @@ const startQRScanning = () => {
         try {
             if (!video.value || video.value.readyState < 2) return;
 
-            // draw frame into canvas
             const tmpCanvas = canvas.value;
             tmpCanvas.width = video.value.videoWidth;
             tmpCanvas.height = video.value.videoHeight;
             const tmpCtx = tmpCanvas.getContext("2d");
             tmpCtx.drawImage(video.value, 0, 0, tmpCanvas.width, tmpCanvas.height);
 
-            // try BarcodeDetector (fast)
             if (barcodeDetector) {
                 try {
                     const detections = await barcodeDetector.detect(tmpCanvas);
@@ -631,7 +675,6 @@ const startQRScanning = () => {
                     console.warn("BarcodeDetector error:", err);
                 }
             } else {
-                // fallback: draw overlay telling user BarcodeDetector not available
                 ctx.clearRect(0, 0, overlay.width, overlay.height);
                 ctx.fillStyle = "rgba(0,0,0,0.25)";
                 ctx.fillRect(0, 0, overlay.width, overlay.height);
@@ -648,21 +691,34 @@ const startQRScanning = () => {
 };
 
 const handleQRResult = (raw) => {
-    // attempt to parse raw QR as JSON (common pattern), else set as searchQuery
     try {
         const parsed = JSON.parse(raw);
-        // if parsed object has visitor fields, populate them
-        if (parsed.name) form.name = parsed.name;
-        if (parsed.email) form.email = parsed.email;
-        if (parsed.phone) form.phone = parsed.phone;
-        if (parsed.company) form.company = parsed.company;
-        if (parsed.aadhaar) form.aadhaar = parsed.aadhaar;
-        // if history or venues available
-        if (Array.isArray(parsed.history)) form.history = parsed.history;
-        if (Array.isArray(parsed.venues)) form.venues = parsed.venues;
-        previewImage.value = parsed.photo_url || previewImage.value;
+
+        form.name = parsed.name || "";
+        form.email = parsed.email || "";
+        form.phone = parsed.phone || "";
+        form.company = parsed.company || "";
+        form.gender = parsed.gender || "";
+        form.aadhaar = parsed.aadhaar || "";
+        form.purpose = parsed.purpose || "";
+        form.badge_no = parsed.badge_no || "";
+
+        form.venues = Array.isArray(parsed.venues) ? parsed.venues : [];
+        form.movement_histories = Array.isArray(parsed.movement_histories)
+            ? parsed.movement_histories
+            : [];
+
+        // meeting fields from QR if present
+        form.meeting_date = parsed.meeting_date || "";
+        // if QR stored meeting_time as ISO, keep it; else try to combine fields if available
+        form.meeting_time = parsed.meeting_time || parsed.meeting_datetime || "";
+
+        form.remarks = parsed.remarks || "";
+
+        // photo autofill
+        if (parsed.photo_url) previewImage.value = fixPhotoUrl(parsed.photo_url);
     } catch (e) {
-        // not JSON - treat as search query and auto search
+        // if not JSON, treat as search term
         searchQuery.value = raw;
         searchVisitor();
     }
@@ -680,7 +736,7 @@ const stopCamera = () => {
 };
 
 /* -------------------------
-   Venues handling and layout fix
+   Venues handling
    ------------------------- */
 const addVenue = () => {
     const val = (venueInput.value || "").trim();
@@ -694,12 +750,9 @@ const addVenue = () => {
 const removeVenue = (i) => form.venues.splice(i, 1);
 
 /* -------------------------
-   Search behavior (auto)
-   - removed manual search button
-   - search triggered on input with debounce, on enter, on blur
+   Search behavior
    ------------------------- */
 const onSearchInput = () => {
-    // debounce to avoid heavy calls
     if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
     searchDebounceTimer = setTimeout(() => {
         if (searchQuery.value && searchQuery.value.trim()) searchVisitor();
@@ -707,36 +760,92 @@ const onSearchInput = () => {
 };
 
 const selectVisitor = (v) => {
-    // populate fields explicitly to keep reactivity and fix history show
     form.id = v.id || null;
     form.name = v.name || "";
     form.email = v.email || "";
     form.phone = v.phone || "";
     form.company = v.company || "";
-    form.purpose = v.purpose || "";
-    form.badge_no = v.badge_no || "";
     form.gender = v.gender || "";
-    form.aadhaar = v.aadhaar || "";
-    form.venues = Array.isArray(v.venues) ? [...v.venues] : [];
-    form.history = Array.isArray(v.history) ? [...v.history] : [];
-    previewImage.value = v.photo_url || null;
+
+    form.aadhaar =
+        v.aadhaar ||
+        v.aadhar ||
+        v.aadhaar_no ||
+        v.aadhar_no ||
+        "";
+
+    form.purpose =
+        v.purpose ||
+        v.purpose_of_visit ||
+        "";
+
+    form.badge_no = v.badge_no || v.badge || "";
+
+    form.venues =
+        Array.isArray(v.venues) ? [...v.venues] :
+            Array.isArray(v.venue_list) ? [...v.venue_list] :
+                [];
+
+    form.movement_histories =
+        Array.isArray(v.movement_histories) ? [...v.movement_histories] :
+            Array.isArray(v.history) ? [...v.history] :
+                [];
+
+    // populate meeting fields if backend provides them
+    form.meeting_date = v.meeting_date || "";
+    form.meeting_time = v.meeting_time || "";
+    form.remarks = v.remarks || "";
+
+    const photo =
+        v.photo_url ||
+        v.photo ||
+        v.image ||
+        v.image_url ||
+        v.profile_photo ||
+        v.profile_photo_url ||
+        v.avatar ||
+        "";
+
+    if (photo) {
+        previewImage.value = fixPhotoUrl(photo);
+        form.photo = null;
+    } else {
+        previewImage.value = null;
+    }
+
     searchResults.value = [];
 };
 
-/* actual fetch to backend */
 const searchVisitor = async () => {
     searchError.value = "";
     searchResults.value = [];
-    if (!searchQuery.value || !searchQuery.value.trim()) return (searchError.value = "Please enter email, phone, or company.");
+
+    if (!searchQuery.value.trim()) {
+        searchError.value = "Please enter email, phone, or company.";
+        return;
+    }
+
     try {
-        const res = await axios.post(AppRoutes.visitor.search, { query: searchQuery.value.trim() });
-        if (res.data.found && Array.isArray(res.data.visitors)) {
-            searchResults.value = res.data.visitors;
-        } else if (res.data.visitor) {
+        const res = await axios.post(AppRoutes.visitor.search, {
+            query: searchQuery.value.trim(),
+        });
+
+        if (res.data.visitor) {
             selectVisitor(res.data.visitor);
-        } else {
-            searchError.value = "No existing record found.";
+            return;
         }
+
+        if (Array.isArray(res.data.visitors) && res.data.visitors.length) {
+            searchResults.value = res.data.visitors;
+            return;
+        }
+
+        if (Array.isArray(res.data.data) && res.data.data.length) {
+            searchResults.value = res.data.data;
+            return;
+        }
+
+        searchError.value = "No existing record found.";
     } catch (err) {
         console.error(err);
         searchError.value = "Error occurred while searching.";
@@ -745,40 +854,53 @@ const searchVisitor = async () => {
 
 /* -------------------------
    Form validation & invite
-   - make all fields required
-   - ensure venues & aadhaar & purpose presence
    ------------------------- */
 const isFormValid = computed(() => {
     return (
         form.name &&
-        form.email &&
         form.phone &&
         form.company &&
         form.gender &&
         form.aadhaar &&
         form.purpose &&
         Array.isArray(form.venues) &&
-        form.venues.length > 0
+        form.venues.length > 0 &&
+        form.meeting_date &&
+        form.meeting_time
     );
 });
 
 const inviteVisitor = async () => {
     if (!isFormValid.value) {
-        alert("Please fill all required fields (including at least one venue).");
+        alert("Please fill all required fields (including meeting date/time and at least one venue).");
         return;
     }
 
     const data = new FormData();
-    // append all keys from form; use for.reset or manual append
-    Object.keys(form).forEach((k) => {
-        if (k === "venues") data.append(k, JSON.stringify(form.venues));
-        // else if (k === "history") data.append(k, JSON.stringify(form.history || []));
-        else data.append(k, form[k] ?? "");
-    });
+    data.append("name", form.name ?? "");
+    data.append("email", form.email ?? "");
+    data.append("phone", form.phone ?? "");
+    data.append("company", form.company ?? "");
+    data.append("purpose", form.purpose ?? "");
+    data.append("badge_no", form.badge_no ?? "");
+    data.append("gender", form.gender ?? "");
+    data.append("aadhaar", form.aadhaar ?? "");
+    data.append("venues", JSON.stringify(form.venues || []));
 
-    // if photo File present, append it (use form.photo if it's a File)
+    // NEW meeting fields
+    data.append("meeting_date", form.meeting_date ?? "");
+    // meeting_time send as ISO-ish string from datetime-local input (backend expects a datetime)
+    data.append("meeting_time", form.meeting_time ?? "");
+    data.append("remarks", form.remarks ?? "");
+
+    // include movement_histories only for reference (optional)
+    data.append("movement_histories", JSON.stringify(form.movement_histories || []));
+
     if (form.photo instanceof File) {
         data.append("photo", form.photo);
+    } else if (previewImage.value && !form.photo) {
+        // if your backend supports `photo_url` you can send previewImage (absolute URL)
+        // data.append("photo_url", previewImage.value);
     }
 
     const route = form.id ? AppRoutes.visitor.reinvite(form.id) : AppRoutes.visitor.invite;
@@ -786,27 +908,46 @@ const inviteVisitor = async () => {
     try {
         const res = await axios.post(route, data);
         alert(res.data.message || "Visitor invited successfully!");
-        form.reset();
+        // reset form to initial values
+        form.reset({
+            id: null,
+            name: "",
+            email: "",
+            phone: "",
+            company: "",
+            purpose: "",
+            badge_no: "",
+            gender: "",
+            aadhaar: "",
+            venues: [],
+            movement_histories: [],
+            photo: null,
+            meeting_date: "",
+            meeting_time: "",
+            remarks: "",
+        });
         previewImage.value = null;
-        // ensure local arrays reset
-        form.venues = [];
-        form.history = [];
+        venueInput.value = "";
     } catch (err) {
         console.error(err);
         alert("Something went wrong while inviting visitor.");
     }
 };
 
-/* utility: ensure camera stops if user navigates away */
-watch(() => qrMode.value, (v) => {
-    if (!v) {
-        // nothing special
+/* helper: format date for history display */
+const formatDate = (d) => {
+    try {
+        if (!d) return "";
+        const dt = new Date(d);
+        if (isNaN(dt.getTime())) return d;
+        return dt.toLocaleDateString("en-IN");
+    } catch {
+        return d;
     }
-});
+};
 
-/* ensure stop on unmount (not strictly necessary in SFC but safe) */
+/* ensure stop on unmount (safe) */
 onMounted(() => {
-    // close modal stop camera when hiding
     if (cameraModal.value) {
         cameraModal.value.addEventListener?.("hidden.bs.modal", stopCamera);
     }
@@ -827,7 +968,6 @@ onMounted(() => {
     display: flex;
     flex-wrap: wrap;
     gap: 0.25rem;
-    /* keep badges visually attached by using negative margin if required */
     margin-top: 0.35rem;
 }
 
