@@ -14,17 +14,17 @@ class VisitorSeeder extends Seeder
 
         for ($i = 1; $i <= 300; $i++) {
             Visitor::create([
-                'name' => $faker->name(),
-                'email' => $faker->unique()->safeEmail(),
-                'phone' => $faker->numerify('##########'),
-                'company' => $faker->company(),
-                'gender' => $faker->randomElement(['Male', 'Female', 'Other']),
-                'purpose' => $faker->sentence(),
-                'badge_no' => strtoupper($faker->bothify('BADGE-###??')),
-                'photo' => null,
+                'visitor_type' => $faker->randomElement(['Guest', 'Client', 'Vendor', 'Other']),
+                'name'         => $faker->name(),
+                'email'        => $faker->unique()->safeEmail(),
+                'phone'        => $faker->numerify('##########'),
+                'company'      => $faker->company(),
+                'gender'       => $faker->randomElement(['Male', 'Female', 'Other']),
+                'aadhaar'      => $faker->numerify('############'),
+                'badge_no'     => strtoupper($faker->bothify('BDG###??')),
+                'photo'        => null,
+                'created_by'   => null,   // FIXED → No foreign key error
             ]);
-
-
         }
     }
 }

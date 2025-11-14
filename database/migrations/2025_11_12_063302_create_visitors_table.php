@@ -9,21 +9,21 @@ return new class extends Migration {
     {
         Schema::create('visitors', function (Blueprint $table) {
             $table->id();
+            $table->string('visitor_type')->nullable();
             $table->string('name');
+            $table->text('photo')->nullable();
             $table->string('email')->nullable();
             $table->string('phone')->nullable();
             $table->string('company')->nullable();
-            $table->text('purpose')->nullable();
             $table->string('badge_no')->unique();
-            $table->text('photo')->nullable();
-            $table->timestamp('checked_in_at')->nullable();
-            $table->timestamp('checked_out_at')->nullable();
+            $table->string('gender')->nullable();
+            $table->string('aadhaar')->nullable();
             $table->unsignedBigInteger('created_by')->nullable();
             $table->timestamps();
-            $table->string('gender')->nullable();
-            $table->json('venues')->nullable();
-            $table->string('aadhaar')->nullable();
 
+            $table->foreign('created_by')
+                ->references('id')->on('users')
+                ->nullOnDelete();
         });
     }
 

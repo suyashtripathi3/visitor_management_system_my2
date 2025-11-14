@@ -3,228 +3,113 @@
 namespace App\Http\Controllers\VisitorManagement;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use App\Models\Visitor;
-use App\Models\VisitorMovementHistory;
-use App\Models\VisitorMeetingDetails;
+use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use Illuminate\Support\Str;
-use Carbon\Carbon;
 use Inertia\Inertia;
-use Inertia\Response;
 use Auth;
-use Storage;
 
 class VisitorController extends Controller
 {
     /**
-     * 🧭 Display the list of visitors (Inertia Page)
+     * List Visitors
      */
-    public function index(Request $request): Response
+    public function index(Request $request)
     {
-        $query = Visitor::with([
-            'movementHistories' => function ($q) {
-                $q->latest();
-            }
-        ])->orderByDesc('created_at');
-
-        // 🔍 Status filter
-        if ($request->filled('status')) {
-            switch ($request->status) {
-                case 'checked_in':
-                    $query->whereHas('movementHistories', function ($q) {
-                        $q->whereNotNull('checked_in_at')
-                            ->whereNull('checked_out_at');
-                    });
-                    break;
-
-                case 'checked_out':
-                    $query->whereHas('movementHistories', function ($q) {
-                        $q->whereNotNull('checked_out_at');
-                    });
-                    break;
-
-                case 'not_checked_in':
-                    // ✅ Visitors who have NO movement record OR only have movement without check_in
-                    $query->whereDoesntHave('movementHistories', function ($q) {
-                        $q->whereNotNull('checked_in_at');
-                    });
-                    break;
-            }
-        }
-
-        // 🔍 Search filter
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%")
-                    ->orWhere('phone', 'like', "%{$search}%")
-                    ->orWhere('company', 'like', "%{$search}%")
-                    ->orWhere('badge_no', 'like', "%{$search}%");
-            });
-        }
-
-        // 🔢 Handle perPage dropdown
-        $perPage = $request->perPage === 'all'
-            ? $query->count()
-            : (is_numeric($request->perPage) ? (int) $request->perPage : 10);
-
-        $visitors = $query->paginate($perPage)->appends($request->query());
+        $visitors = Visitor::with('movementHistories')
+            ->when($request->search, function ($q) use ($request) {
+                $q->where(function ($sub) use ($request) {
+                    $sub->where('name', 'like', "%{$request->search}%")
+                        ->orWhere('email', 'like', "%{$request->search}%")
+                        ->orWhere('phone', 'like', "%{$request->search}%")
+                        ->orWhere('company', 'like', "%{$request->search}%");
+                });
+            })
+            ->orderByDesc('created_at')
+            ->paginate(10);
 
         return Inertia::render('VisitorManagement/Index', [
             'visitors' => $visitors,
-            'filters' => $request->only(['search', 'status', 'perPage']),
+            'filters' => $request->only('search')
         ]);
     }
 
     /**
-     * 📄 Invite form page
+     * Create Page
      */
-    public function create(): Response
+    public function create()
     {
         return Inertia::render('VisitorManagement/Form');
     }
 
     /**
-     * 💌 Invite new visitor
+     * Store Visitor
      */
-    public function invite(Request $request)
+    public function store(Request $request)
     {
         $data = $request->validate([
+            'visitor_type' => 'nullable|string|max:50',
             'name' => 'required|string|max:191',
             'email' => 'nullable|email|max:191',
-            'phone' => 'required|digits_between:10,12',
-            'company' => 'required|string|max:191',
-            'gender' => 'required|string|max:20',
-            'purpose' => 'required|string',
-            'venues' => 'required',
-            'meeting_date' => 'required|date',
-            'meeting_time' => 'required',
-            'remarks' => 'nullable|string',
+            'phone' => 'nullable|digits_between:10,12',
+            'company' => 'nullable|string|max:191',
+            'gender' => 'nullable|string|max:20',
+            'aadhaar' => 'nullable|string|max:20',
             'photo' => 'nullable|image|max:2048',
-            'aadhaar' => 'required|digits:12',
         ]);
 
-        // Handle photo upload
-        if ($request->hasFile('photo') && $request->file('photo')->isValid()) {
+        if ($request->hasFile('photo')) {
             $filename = time() . '_' . preg_replace('/\s+/', '_', $request->file('photo')->getClientOriginalName());
             $request->file('photo')->move(public_path('assets/images/visitor'), $filename);
             $data['photo'] = 'assets/images/visitor/' . $filename;
         }
 
-        $data['badge_no'] = strtoupper(Str::random(6));
+        $data['badge_no'] = strtoupper(\Str::random(6));
         $data['created_by'] = Auth::id();
 
         $visitor = Visitor::create($data);
 
-        // 👇 Create Movement (NO purpose, NO venue)
-        $movement = VisitorMovementHistory::create([
-            'visitor_id' => $visitor->id,
-            'checked_in_at' => null,
-            'checked_out_at' => null,
-        ]);
-
-        // JSON decode venues
-        $venues = is_string($request->venues)
-            ? json_decode($request->venues, true)
-            : $request->venues;
-
-        // 👇 Create Meeting Details
-        VisitorMeetingDetails::create([
-            'visitor_id' => $visitor->id,
-            'movement_id' => $movement->id,
-            'purpose' => $request->purpose,
-            'venues' => $venues,
-            'meeting_date' => $request->meeting_date,
-            'meeting_time' => $request->meeting_time,
-            'remarks' => $request->remarks,
-        ]);
-
         return response()->json([
-            'message' => 'Visitor invited successfully!',
-            'visitor' => $visitor->load('movementHistories'),
+            'message' => 'Visitor created successfully',
+            'visitor' => $visitor
         ]);
     }
 
     /**
-     * 🔁 Re-invite existing visitor
+     * Edit Page
      */
-    public function reinvite($id)
+    public function edit($id)
     {
         $visitor = Visitor::findOrFail($id);
 
-        // New movement
-        $movement = VisitorMovementHistory::create([
-            'visitor_id' => $visitor->id,
-            'checked_in_at' => null,
-            'checked_out_at' => null,
-        ]);
-
-        // Meeting details for reinvite
-        VisitorMeetingDetails::create([
-            'visitor_id' => $visitor->id,
-            'movement_id' => $movement->id,
-            'purpose' => 'Re-invite',
-            'venues' => null,
-            'meeting_date' => now()->toDateString(),
-            'meeting_time' => now(),
-        ]);
-
-        return response()->json([
-            'message' => 'Visitor re-invited successfully.',
-            'visitor' => $visitor->load('movementHistories'),
-        ]);
-    }
-
-
-    /**
-     * ✏️ Edit form
-     */
-    public function edit($id): Response
-    {
-        $visitor = Visitor::with('movementHistories')->findOrFail($id);
-
-        return Inertia::render('VisitorManagement/Invite', [
-            'editId' => $visitor->id,
-            'visitor' => $visitor,
+        return Inertia::render('VisitorManagement/Form', [
+            'visitor' => $visitor
         ]);
     }
 
     /**
-     * 🔄 Update visitor details
+     * Update Visitor
      */
     public function update(Request $request, $id)
     {
         $visitor = Visitor::findOrFail($id);
 
         $data = $request->validate([
-            'name' => 'required|string|max:191',
-            'email' => 'required|email|max:191',
+            'name' => 'required|max:191',
+            'email' => 'nullable|email|max:191',
             'phone' => 'nullable|digits_between:10,12',
-            'company' => 'nullable|string|max:191',
+            'company' => 'nullable|max:191',
             'gender' => 'nullable|string|max:20',
-            'photo' => 'nullable',
+            'aadhaar' => 'nullable|string|max:20',
             'badge_no' => [
                 'nullable',
-                'string',
-                'max:50',
-                Rule::unique('visitors', 'badge_no')->ignore($visitor->id),
+                Rule::unique('visitors')->ignore($visitor->id)
             ],
+            'photo' => 'nullable|image|max:2048'
         ]);
 
-
-        if ($request->hasFile('photo') && $request->file('photo')->isValid()) {
-            if ($visitor->photo) {
-                $path = public_path($visitor->photo);
-                if (file_exists($path)) {
-                    unlink($path);
-                } elseif (Storage::disk('public')->exists($visitor->photo)) {
-                    Storage::disk('public')->delete($visitor->photo);
-                }
-            }
-
-            $filename = time() . '_' . preg_replace('/\s+/', '_', $request->file('photo')->getClientOriginalName());
+        if ($request->hasFile('photo')) {
+            $filename = time() . '_' . $request->file('photo')->getClientOriginalName();
             $request->file('photo')->move(public_path('assets/images/visitor'), $filename);
             $data['photo'] = 'assets/images/visitor/' . $filename;
         }
@@ -232,126 +117,19 @@ class VisitorController extends Controller
         $visitor->update($data);
 
         return response()->json([
-            'message' => 'Visitor updated successfully.',
-            'visitor' => $visitor->load('movementHistories'),
+            'message' => 'Visitor updated successfully',
+            'visitor' => $visitor
         ]);
     }
 
     /**
-     * 🗑️ Delete visitor
+     * Delete Visitor
      */
     public function destroy($id)
     {
         $visitor = Visitor::findOrFail($id);
-
-        if ($visitor->photo)
-            Storage::disk('public')->delete($visitor->photo);
-
-        $visitor->movementHistories()->delete();
         $visitor->delete();
 
-        return redirect()->route('visitor.index')->with('success', 'Visitor deleted successfully.');
+        return redirect()->back()->with('success', 'Visitor deleted successfully');
     }
-
-    /**
-     * 🟢 Check-in visitor
-     */
-    public function checkIn($id)
-    {
-        $visitor = Visitor::findOrFail($id);
-        $movement = $visitor->movementHistories()->latest()->first();
-
-        if ($movement && $movement->checked_in_at && !$movement->checked_out_at) {
-            return back()->with('error', 'Visitor is already checked in.');
-        }
-
-        if (!$movement || $movement->checked_out_at) {
-            $movement = VisitorMovementHistory::create([
-                'visitor_id' => $visitor->id,
-                'purpose' => 'Check-in',
-                'venues' => null,
-                'checked_in_at' => Carbon::now(),
-                'checked_out_at' => null,
-            ]);
-        } else {
-            $movement->update(['checked_in_at' => Carbon::now()]);
-        }
-
-        return back()->with('success', 'Visitor checked in successfully.');
-    }
-
-    /**
-     * 🔴 Check-out visitor
-     */
-    public function checkOut($id)
-    {
-        $visitor = Visitor::with('movementHistories')->findOrFail($id);
-        $movement = $visitor->movementHistories()->latest()->first();
-
-        if (!$movement || !$movement->checked_in_at) {
-            return back()->with('error', 'Visitor has not been checked in yet.');
-        }
-
-        if ($movement->checked_out_at) {
-            return back()->with('error', 'Visitor already checked out.');
-        }
-
-        $movement->checked_out_at = now();
-        $movement->save();
-
-        return back()->with('success', 'Visitor checked out successfully.');
-    }
-
-    /**
-     * 🔍 Smart Search for Invite Form
-     */
-    public function search(Request $request)
-    {
-        $query = $request->input('query');
-
-        if (!$query) {
-            return response()->json(['found' => false]);
-        }
-
-        $visitors = Visitor::query()
-            ->where('email', 'like', "%{$query}%")
-            ->orWhere('phone', 'like', "%{$query}%")
-            ->orWhere('company', 'like', "%{$query}%")
-            ->take(10)
-            ->with('movementHistories')
-            ->get();
-
-        if ($visitors->isEmpty()) {
-            return response()->json(['found' => false]);
-        }
-
-        if ($visitors->count() === 1) {
-            return response()->json(['found' => true, 'visitor' => $visitors->first()]);
-        }
-
-        return response()->json(['found' => true, 'visitors' => $visitors]);
-    }
-
-    public function movements($id)
-    {
-        $visitor = Visitor::with([
-            'movementHistories.meetingDetails'
-        ])->findOrFail($id);
-
-        return Inertia::render('VisitorManagement/Movements', [
-            'visitor' => $visitor,
-            'movements' => $visitor->movementHistories,
-        ]);
-    }
-
-    public function meetingDetails($movementId)
-    {
-        $meetings = VisitorMeetingDetails::where('movement_id', $movementId)->get();
-
-        return response()->json([
-            'meetings' => $meetings
-        ]);
-    }
-
-
 }

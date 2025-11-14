@@ -11,22 +11,23 @@ class Visitor extends Model
 
     protected $fillable = [
         'name',
+        'visitor_type',
         'email',
         'phone',
         'company',
         'photo',
         'badge_no',
-        'created_by',
         'gender',
-        "aadhaar",
+        'aadhaar',
+        'created_by',
     ];
+
 
     protected $casts = [
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
 
-    // Relationship: One visitor can have multiple movement history records
     public function movementHistories()
     {
         return $this->hasMany(VisitorMovementHistory::class);

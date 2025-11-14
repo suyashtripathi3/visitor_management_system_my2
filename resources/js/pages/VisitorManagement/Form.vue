@@ -344,6 +344,8 @@ const form = useForm({
     remarks: "",
 });
 
+
+
 /* --- UI / refs --- */
 const searchQuery = ref("");
 const searchResults = ref([]);
@@ -372,6 +374,8 @@ const qrData = ref(null);
 
 /* QR barcode detector instance */
 let barcodeDetector = null;
+
+
 
 /* Load face-api.js models on mount */
 onMounted(async () => {
@@ -863,8 +867,6 @@ const isFormValid = computed(() => {
         form.gender &&
         form.aadhaar &&
         form.purpose &&
-        Array.isArray(form.venues) &&
-        form.venues.length > 0 &&
         form.meeting_date &&
         form.meeting_time
     );
@@ -885,7 +887,6 @@ const inviteVisitor = async () => {
     data.append("badge_no", form.badge_no ?? "");
     data.append("gender", form.gender ?? "");
     data.append("aadhaar", form.aadhaar ?? "");
-    data.append("venues", JSON.stringify(form.venues || []));
 
     // NEW meeting fields
     data.append("meeting_date", form.meeting_date ?? "");
@@ -919,12 +920,10 @@ const inviteVisitor = async () => {
             badge_no: "",
             gender: "",
             aadhaar: "",
-            venues: [],
             movement_histories: [],
             photo: null,
             meeting_date: "",
             meeting_time: "",
-            remarks: "",
         });
         previewImage.value = null;
         venueInput.value = "";
@@ -932,6 +931,8 @@ const inviteVisitor = async () => {
         console.error(err);
         alert("Something went wrong while inviting visitor.");
     }
+    console.log(this.FormData);
+
 };
 
 /* helper: format date for history display */

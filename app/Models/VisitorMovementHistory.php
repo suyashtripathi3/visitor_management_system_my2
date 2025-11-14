@@ -11,44 +11,36 @@ class VisitorMovementHistory extends Model
 
     protected $fillable = [
         'visitor_id',
-        'checked_in_at',
-        'checked_out_at',
+        'user_id',
+        'meeting_date',
+        'meeting_time',
+        'purpose',
+        'person_req',
     ];
 
     protected $casts = [
-        'checked_in_at' => 'datetime',
-        'checked_out_at' => 'datetime',
+        'meeting_date' => 'date',
+        'meeting_time' => 'datetime:H:i:s',
     ];
 
-    // Relationship: Each movement belongs to a specific visitor
+
     public function visitor()
     {
         return $this->belongsTo(Visitor::class);
     }
 
-    // A movement can have multiple meeting entries
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
     public function meetingDetails()
     {
-        return $this->hasMany(VisitorMeetingDetails::class);
+        return $this->hasMany(VisitorMeetingDetails::class, 'movement_id');
     }
 
-    // Accessors for formatted datetime
-    public function getCheckedInAtFormattedAttribute()
+    public function withVisitors()
     {
-        return optional($this->checked_in_at)->format('d M Y, h:i A');
-    }
-
-    public function getCheckedOutAtFormattedAttribute()
-    {
-        return optional($this->checked_out_at)->format('d M Y, h:i A');
-    }
-
-    public function getStatusAttribute()
-    {
-        if ($this->checked_out_at)
-            return 'checked_out';
-        if ($this->checked_in_at)
-            return 'checked_in';
-        return 'not_checked_in';
+        return $this->hasMany(WithVisitor::class, 'movement_id');
     }
 }

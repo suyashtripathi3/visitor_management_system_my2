@@ -5,26 +5,15 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class VisitorMeetingDetails extends Model
+class WithVisitor extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'visitor_id',
         'movement_id',
-        'checked_in_at',
-        'checked_out_at',
+        'in_with',
+        'out_with',
     ];
-
-    protected $casts = [
-        'checked_in_at' => 'datetime',
-        'checked_out_at' => 'datetime',
-    ];
-
-    public function visitor()
-    {
-        return $this->belongsTo(Visitor::class);
-    }
 
     public function movement()
     {
